@@ -1,8 +1,16 @@
 # Video-Downloader
 
-Einfaches Programm mit Fenster, um Videos von YouTube, TikTok, Instagram, X, Twitch, Reddit und über 1000 weiteren Seiten herunterzuladen – Link einfügen, auf „Download“ klicken, fertig.
+Einfache Windows-App, um Videos von YouTube, TikTok, Instagram, X, Twitch, Reddit und über 1000 weiteren Seiten herunterzuladen – Link einfügen, auf „Download“ klicken, fertig.
 
-Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+## ⬇ Download
+
+**[VideoDownloader.exe herunterladen](https://github.com/CASHFL00W/video-downloader/releases/latest/download/VideoDownloader.exe)**
+
+Einfach doppelklicken – keine Installation, kein Python nötig.
+
+> Windows zeigt beim ersten Start evtl. „Der Computer wurde durch Windows geschützt“, weil die App nicht von einer großen Firma signiert ist. Dann auf **Weitere Informationen → Trotzdem ausführen** klicken.
+
+Beim allerersten Start richtet die App einmalig ffmpeg ein (ca. 100 MB, dauert je nach Internet ein paar Sekunden bis Minuten). Das wird für beste Qualität und MP3 gebraucht.
 
 ## Funktionen
 
@@ -11,29 +19,23 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 - Ganze Playlists auf Wunsch
 - Fortschrittsanzeige mit Geschwindigkeit und Restzeit
 - Speicherort frei wählbar (Standard: `Downloads\Video-Downloader`)
-- Button zum Aktualisieren von yt-dlp, falls eine Seite plötzlich nicht mehr klappt
 
-## Installation (Windows)
+## Eine Seite funktioniert plötzlich nicht mehr?
 
-1. **Python installieren**: https://www.python.org/downloads/
-   Beim Installieren unbedingt den Haken bei **„Add python.exe to PATH“** setzen.
-2. **ffmpeg installieren** (empfohlen, für beste Qualität und MP3):
-   Eingabeaufforderung öffnen und eingeben:
-   ```
-   winget install Gyan.FFmpeg
-   ```
-3. Dieses Repository herunterladen: oben auf **Code → Download ZIP**, dann entpacken.
-4. **`Start.bat`** doppelklicken. Beim ersten Start wird yt-dlp automatisch installiert.
-
-## Benutzung
-
-1. Link(s) in das obere Feld einfügen (oder „Aus Zwischenablage einfügen“ klicken)
-2. Video oder Audio auswählen
-3. **Download starten** klicken
-4. Mit **Ordner öffnen** gelangst du direkt zu den Dateien
-
-Wenn eine Seite nicht mehr funktioniert: **yt-dlp aktualisieren** klicken und das Programm neu starten.
+YouTube, TikTok & Co. ändern öfter etwas. In der App auf **Nach Updates suchen** klicken und die neueste `VideoDownloader.exe` herunterladen.
 
 ## Hinweis
 
 Lade nur Inhalte herunter, die du herunterladen darfst – z. B. eigene Videos, freie Inhalte oder solche, für die du die Erlaubnis hast. Die Nutzungsbedingungen mancher Plattformen verbieten das Herunterladen.
+
+---
+
+<details>
+<summary>Für Entwickler</summary>
+
+Aus dem Quellcode starten: `python video_downloader.py` (Python 3.10+, yt-dlp wird beim ersten Start automatisch installiert).
+
+Bei jedem Push auf `main` baut GitHub Actions automatisch eine neue `VideoDownloader.exe` und veröffentlicht sie als Release.
+
+Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+</details>

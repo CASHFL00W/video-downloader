@@ -1,0 +1,47 @@
+name: Windows-App bauen
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["README.md", "LICENSE"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install --upgrade pip yt-dlp pyinstaller
+
+      - name: VideoDownloader.exe bauen
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name VideoDownloader
+          --icon icon.ico
+          --add-data "icon.ico;."
+          --collect-submodules yt_dlp
+          video_downloader.py
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Video-Downloader v1.0.${{ github.run_number }}
+          make_latest: true
+          files: dist/VideoDownloader.exe
+          body: |
+            **VideoDownloader.exe** herunterladen und doppelklicken – fertig. Keine Installation nötig.
+
+            Beim ersten Start wird ffmpeg einmalig automatisch eingerichtet (ca. 100 MB).
+
+            Falls Windows „Der Computer wurde durch Windows geschützt“ anzeigt:
+            auf **Weitere Informationen** → **Trotzdem ausführen** klicken.
