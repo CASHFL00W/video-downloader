@@ -28,6 +28,120 @@ if sys.stderr is None:
 
 REPO_URL = "https://github.com/CASHFL00W/video-downloader"
 RELEASES_URL = REPO_URL + "/releases/latest"
+API_LATEST = "https://api.github.com/repos/CASHFL00W/video-downloader/releases/latest"
+ASSET_NAME = "VideoDownloader.exe"
+
+try:
+    from _version import VERSION  # wird beim Bauen der .exe automatisch erzeugt
+except ImportError:
+    VERSION = "dev"
+
+
+# --------------------------------------------------------------------------
+# Selbst-Update
+# --------------------------------------------------------------------------
+def version_tuple(v):
+    try:
+        return tuple(int(x) for x in v.lstrip("vV").split("."))
+    except ValueError:
+        return (0,)
+
+
+def http_get(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "VideoDownloader",
+                                               "Accept": "application/vnd.github+json"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def check_for_update(q, manual):
+    """Fragt GitHub nach der neuesten Version."""
+    try:
+        with http_get(API_LATEST, timeout=15) as r:
+            data = json.load(r)
+        latest = data.get("tag_name", "")
+        asset = next((a for a in data.get("assets", []) if a.get("name") == ASSET_NAME), None)
+        if asset and version_tuple(latest) > version_tuple(VERSION):
+            q.put(("update_available", {
+                "version": latest.lstrip("vV"),
+                "url": asset["browser_download_url"],
+                "size": asset.get("size", 0),
+                "digest": asset.get("digest") or "",
+                "notes": data.get("name", ""),
+            }, manual))
+        else:
+            q.put(("update_none", latest.lstrip("vV"), manual))
+    except Exception as e:
+        q.put(("update_check_failed", str(e), manual))
+
+
+def cleanup_old_exe():
+    """Entfernt die alte .exe, die beim letzten Update übrig geblieben ist."""
+    if FROZEN:
+        old = os.path.splitext(sys.executable)[0] + ".old.exe"
+        try:
+            if os.path.exists(old):
+                os.remove(old)
+        except OSError:
+            pass
+
+
+def download_and_install_update(info, q):
+    """Lädt die neue .exe herunter, tauscht sie gegen die laufende und startet neu."""
+    exe = sys.executable
+    base = os.path.splitext(exe)[0]
+    new_path = base + ".new.exe"
+    old_path = base + ".old.exe"
+    try:
+        import hashlib
+        sha = hashlib.sha256()
+        with http_get(info["url"], timeout=60) as r, open(new_path, "wb") as f:
+            total = int(r.headers.get("Content-Length") or info.get("size") or 0)
+            done = 0
+            while True:
+                chunk = r.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                sha.update(chunk)
+                done += len(chunk)
+                if total:
+                    pct = done / total * 100
+                    q.put(("progress", pct, f"Update wird geladen ... {pct:4.0f} %  "
+                                            f"({done // 1048576} / {total // 1048576} MB)"))
+
+        # Datei prüfen: Größe und (falls vorhanden) Prüfsumme von GitHub
+        if info.get("size") and os.path.getsize(new_path) != info["size"]:
+            raise RuntimeError("Download unvollständig.")
+        digest = info.get("digest", "")
+        if digest.startswith("sha256:") and digest[7:].lower() != sha.hexdigest():
+            raise RuntimeError("Prüfsumme stimmt nicht – Update abgebrochen.")
+
+        # Laufende .exe umbenennen (unter Windows erlaubt) und neue an ihre Stelle setzen
+        if os.path.exists(old_path):
+            os.remove(old_path)
+        os.replace(exe, old_path)
+        try:
+            os.replace(new_path, exe)
+        except Exception:
+            os.replace(old_path, exe)  # zurückrollen
+            raise
+
+        # Neue Version starten (frische Umgebung, damit sie sauber entpackt)
+        env = dict(os.environ)
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        for key in list(env):
+            if key.startswith("_PYI") or key == "_MEIPASS2":
+                env.pop(key, None)
+        subprocess.Popen([exe], env=env, close_fds=True,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        q.put(("update_installed", info["version"]))
+    except Exception as e:
+        try:
+            if os.path.exists(new_path):
+                os.remove(new_path)
+        except OSError:
+            pass
+        q.put(("update_failed", str(e)))
 
 
 # --------------------------------------------------------------------------
@@ -258,7 +372,7 @@ def download_worker(urls, folder, mode, quality, fmt, playlist, ffmpeg_dir, q):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Video-Downloader")
+        self.title(f"Video-Downloader  v{VERSION}" if VERSION != "dev" else "Video-Downloader")
         self.geometry("740x620")
         self.minsize(600, 520)
         try:
@@ -268,6 +382,7 @@ class App(tk.Tk):
 
         self.q = queue.Queue()
         self.busy = False
+        self.pending_update = None
         self.ffmpeg_dir = find_ffmpeg()
 
         pad = {"padx": 10, "pady": 5}
@@ -342,8 +457,10 @@ class App(tk.Tk):
 
         bottom = ttk.Frame(self)
         bottom.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Button(bottom, text="Nach Updates suchen" if FROZEN else "yt-dlp aktualisieren",
-                   command=self.update_app).pack(side="left")
+        self.update_btn = ttk.Button(bottom,
+                                     text="Nach Updates suchen" if FROZEN else "yt-dlp aktualisieren",
+                                     command=self.update_app)
+        self.update_btn.pack(side="left")
         self.info_label = ttk.Label(bottom)
         self.info_label.pack(side="right")
         self.refresh_ffmpeg_ui()
@@ -354,6 +471,12 @@ class App(tk.Tk):
             else:
                 self.write_log("Hinweis: ffmpeg nicht gefunden – bitte über den "
                                "Paketmanager installieren für beste Qualität.")
+
+        if FROZEN:
+            cleanup_old_exe()
+            # Beim Start still im Hintergrund nach einem Update schauen
+            self.after(1500, lambda: threading.Thread(
+                target=check_for_update, args=(self.q, False), daemon=True).start())
 
         self.after(100, self.poll)
 
@@ -389,7 +512,7 @@ class App(tk.Tk):
     def refresh_ffmpeg_ui(self):
         self.on_mode_change(initial=True)
         self.info_label.config(
-            text=f"yt-dlp {yt_dlp.version.__version__}   |   ffmpeg: "
+            text=f"App {VERSION}   |   yt-dlp {yt_dlp.version.__version__}   |   ffmpeg: "
                  + ("bereit ✔" if self.ffmpeg_dir else "fehlt ✘"))
 
     def setup_ffmpeg(self):
@@ -450,8 +573,12 @@ class App(tk.Tk):
 
     def update_app(self):
         if FROZEN:
-            self.write_log("Öffne Download-Seite der neuesten Version ...")
-            webbrowser.open(RELEASES_URL)
+            if self.pending_update:
+                self.ask_install_update(self.pending_update)
+                return
+            self.update_btn.config(state="disabled")
+            self.write_log("Suche nach Updates ...")
+            threading.Thread(target=check_for_update, args=(self.q, True), daemon=True).start()
             return
         self.write_log("yt-dlp wird aktualisiert ...")
 
@@ -463,6 +590,25 @@ class App(tk.Tk):
             self.q.put(("log", msg))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def ask_install_update(self, info):
+        if self.busy:
+            messagebox.showinfo("Update", "Bitte warte, bis der aktuelle Download fertig ist.")
+            return
+        mb = info["size"] // 1048576 if info.get("size") else "?"
+        if not messagebox.askyesno(
+                "Update verfügbar",
+                f"Version {info['version']} ist verfügbar (du hast {VERSION}).\n\n"
+                f"Jetzt herunterladen und installieren? ({mb} MB)\n"
+                "Die App startet danach automatisch neu."):
+            return
+        self.busy = True
+        self.dl_btn.config(state="disabled")
+        self.update_btn.config(state="disabled")
+        self.bar["value"] = 0
+        self.write_log(f"Lade Version {info['version']} herunter ...")
+        threading.Thread(target=download_and_install_update, args=(info, self.q),
+                         daemon=True).start()
 
     # ---------- GUI-Updates ----------
     def write_log(self, text):
@@ -496,6 +642,38 @@ class App(tk.Tk):
                     self.bar["value"] = 0
                     self.unlock("Bereit.")
                     self.write_log("✔ ffmpeg ist eingerichtet. Du kannst loslegen!\n")
+                elif kind == "update_available":
+                    info, manual = item[1], item[2]
+                    self.pending_update = info
+                    self.update_btn.config(state="normal",
+                                           text=f"⬆  Update auf v{info['version']} installieren")
+                    self.write_log(f"Neue Version {info['version']} verfügbar.")
+                    if manual:
+                        self.ask_install_update(info)
+                elif kind == "update_none":
+                    self.update_btn.config(state="normal")
+                    if item[2]:
+                        self.write_log(f"Du hast bereits die neueste Version ({VERSION}).")
+                        messagebox.showinfo("Kein Update", f"Du hast bereits die neueste "
+                                                           f"Version ({VERSION}).")
+                elif kind == "update_check_failed":
+                    self.update_btn.config(state="normal")
+                    if item[2]:
+                        self.write_log(f"Update-Suche fehlgeschlagen: {item[1]}")
+                        messagebox.showwarning("Update", "Konnte nicht nach Updates suchen. "
+                                                         "Bist du mit dem Internet verbunden?")
+                elif kind == "update_installed":
+                    self.write_log(f"✔ Version {item[1]} installiert – App startet neu ...")
+                    self.after(800, self.destroy)
+                elif kind == "update_failed":
+                    self.bar["value"] = 0
+                    self.update_btn.config(state="normal")
+                    self.unlock("Bereit.")
+                    self.write_log(f"✘ Update fehlgeschlagen: {item[1]}")
+                    if messagebox.askyesno("Update fehlgeschlagen",
+                                           f"Das Update hat nicht geklappt:\n{item[1]}\n\n"
+                                           "Download-Seite im Browser öffnen?"):
+                        webbrowser.open(RELEASES_URL)
                 elif kind == "ffmpeg_failed":
                     self.bar["value"] = 0
                     self.unlock("Bereit (ohne ffmpeg).")

@@ -19,13 +19,14 @@ Beim allerersten Start richtet die App einmalig ffmpeg ein (ca. 100 MB, dauert j
 - Videoformat: MP4, MKV oder WEBM
 - Nur Audio: MP3, M4A, WAV oder OPUS in wählbarer Qualität (bis 320 kbit/s)
 - Merkt sich deine letzten Einstellungen
+- Aktualisiert sich selbst per Knopfdruck
 - Ganze Playlists auf Wunsch
 - Fortschrittsanzeige mit Geschwindigkeit und Restzeit
 - Speicherort frei wählbar (Standard: `Downloads\Video-Downloader`)
 
 ## Eine Seite funktioniert plötzlich nicht mehr?
 
-YouTube, TikTok & Co. ändern öfter etwas. In der App auf **Nach Updates suchen** klicken und die neueste `VideoDownloader.exe` herunterladen.
+YouTube, TikTok & Co. ändern öfter etwas. Die App prüft beim Start automatisch, ob es eine neue Version gibt. Mit einem Klick auf **Update installieren** wird sie heruntergeladen, eingespielt und die App startet neu – ohne Umweg über GitHub.
 
 ## Hinweis
 
