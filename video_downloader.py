@@ -7,6 +7,7 @@ Basiert auf yt-dlp (https://github.com/yt-dlp/yt-dlp).
 
 import os
 import sys
+import json
 import queue
 import shutil
 import zipfile
@@ -129,7 +130,48 @@ class QuietLogger:
         self.q.put(("log", f"Fehler: {msg}"))
 
 
-def build_options(folder, mode, playlist, ffmpeg_dir, q):
+VIDEO_QUALITIES = {
+    "Beste verfügbare": None,
+    "2160p (4K)": 2160,
+    "1440p (2K)": 1440,
+    "1080p (Full HD)": 1080,
+    "720p (HD)": 720,
+    "480p": 480,
+    "360p": 360,
+    "240p": 240,
+}
+VIDEO_FORMATS = ["MP4", "MKV", "WEBM"]
+
+AUDIO_QUALITIES = {
+    "Beste verfügbare": "0",
+    "320 kbit/s": "320",
+    "256 kbit/s": "256",
+    "192 kbit/s": "192",
+    "128 kbit/s": "128",
+}
+AUDIO_FORMATS = ["MP3", "M4A", "WAV", "OPUS"]
+
+SETTINGS_FILE = os.path.join(APP_DIR, "einstellungen.json")
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_settings(data):
+    try:
+        os.makedirs(APP_DIR, exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def build_options(folder, mode, quality, fmt, playlist, ffmpeg_dir, q):
     def hook(d):
         if d["status"] == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -155,34 +197,52 @@ def build_options(folder, mode, playlist, ffmpeg_dir, q):
         opts["ffmpeg_location"] = ffmpeg_dir
 
     if mode == "audio":
+        codec = fmt.lower()
         if ffmpeg_dir:
             opts["format"] = "bestaudio/best"
             opts["postprocessors"] = [{
                 "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
+                "preferredcodec": codec,
+                "preferredquality": AUDIO_QUALITIES.get(quality, "0"),
             }]
         else:
             opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
     else:
+        container = fmt.lower()
+        height = VIDEO_QUALITIES.get(quality)
+        limit = f"[height<={height}]" if height else ""
         if ffmpeg_dir:
-            # Beste Qualität, Bild + Ton zu MP4 zusammengefügt
-            opts["format"] = "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
-            opts["merge_output_format"] = "mp4"
+            # Höchste Auflösung bis zum gewählten Limit, bevorzugt im gewählten Format
+            opts["format"] = f"bv*{limit}+ba/b{limit}/bv*+ba/b"
+            if container == "webm":
+                # WEBM kann nur VP9/AV1 + Opus enthalten
+                opts["format"] = f"bv*{limit}[ext=webm]+ba[ext=webm]/" + opts["format"]
+            sort = [f"res:{height}"] if height else ["res"]
+            if container == "mp4":
+                sort.append("ext:mp4:m4a")
+            elif container == "webm":
+                sort.append("ext:webm:webm")
+            opts["format_sort"] = sort
+            opts["merge_output_format"] = container
+            # Falls nur ein Format ohne Zusammenfügen kommt, trotzdem ins Zielformat bringen
+            if container in ("mp4", "mkv"):
+                opts["postprocessors"] = [{"key": "FFmpegVideoRemuxer",
+                                           "preferedformat": container}]
         else:
             # Ohne ffmpeg nur Formate mit Bild+Ton in einer Datei
-            opts["format"] = "b[ext=mp4]/b"
+            opts["format"] = f"b{limit}[ext=mp4]/b{limit}/b"
 
     return opts
 
 
-def download_worker(urls, folder, mode, playlist, ffmpeg_dir, q):
+def download_worker(urls, folder, mode, quality, fmt, playlist, ffmpeg_dir, q):
     os.makedirs(folder, exist_ok=True)
     ok = 0
     for i, url in enumerate(urls, 1):
         q.put(("log", f"[{i}/{len(urls)}] Lade: {url}"))
         try:
-            with yt_dlp.YoutubeDL(build_options(folder, mode, playlist, ffmpeg_dir, q)) as ydl:
+            opts = build_options(folder, mode, quality, fmt, playlist, ffmpeg_dir, q)
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get("title", "Video") if info else "Video"
             q.put(("log", f"   ✔ Fertig: {title}"))
@@ -199,8 +259,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Video-Downloader")
-        self.geometry("720x580")
-        self.minsize(560, 480)
+        self.geometry("740x620")
+        self.minsize(600, 520)
         try:
             self.iconbitmap(resource_path("icon.ico"))
         except Exception:
@@ -229,22 +289,42 @@ class App(tk.Tk):
         opt = ttk.LabelFrame(self, text="Optionen")
         opt.pack(fill="x", **pad)
 
-        self.mode = tk.StringVar(value="video")
-        ttk.Radiobutton(opt, text="Video (MP4)", variable=self.mode,
-                        value="video").grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.audio_rb = ttk.Radiobutton(opt, variable=self.mode, value="audio")
-        self.audio_rb.grid(row=0, column=1, sticky="w", padx=8)
-        self.playlist = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opt, text="Ganze Playlist laden",
-                        variable=self.playlist).grid(row=0, column=2, sticky="w", padx=8)
+        s = load_settings()
+        self.saved = s
 
-        ttk.Label(opt, text="Speicherort:").grid(row=1, column=0, sticky="w", padx=8, pady=4)
-        self.folder = tk.StringVar(value=DEFAULT_DIR)
-        ttk.Entry(opt, textvariable=self.folder).grid(row=1, column=1, columnspan=2,
+        ttk.Label(opt, text="Typ:").grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        type_row = ttk.Frame(opt)
+        type_row.grid(row=0, column=1, columnspan=4, sticky="w")
+        self.mode = tk.StringVar(value=s.get("mode", "video"))
+        ttk.Radiobutton(type_row, text="Video", variable=self.mode, value="video",
+                        command=self.on_mode_change).pack(side="left", padx=(8, 16))
+        ttk.Radiobutton(type_row, text="Nur Audio", variable=self.mode, value="audio",
+                        command=self.on_mode_change).pack(side="left", padx=(0, 16))
+        self.playlist = tk.BooleanVar(value=False)
+        ttk.Checkbutton(type_row, text="Ganze Playlist laden",
+                        variable=self.playlist).pack(side="left")
+
+        self.quality_label = ttk.Label(opt)
+        self.quality_label.grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        self.quality = tk.StringVar()
+        self.quality_box = ttk.Combobox(opt, textvariable=self.quality, state="readonly", width=20)
+        self.quality_box.grid(row=1, column=1, sticky="w", padx=8)
+
+        fmt_row = ttk.Frame(opt)
+        fmt_row.grid(row=1, column=2, columnspan=3, sticky="w")
+        ttk.Label(fmt_row, text="Format:").pack(side="left", padx=(8, 8))
+        self.fmt = tk.StringVar()
+        self.fmt_box = ttk.Combobox(fmt_row, textvariable=self.fmt, state="readonly", width=8)
+        self.fmt_box.pack(side="left")
+
+        ttk.Label(opt, text="Speicherort:").grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        self.folder = tk.StringVar(value=s.get("folder", DEFAULT_DIR))
+        ttk.Entry(opt, textvariable=self.folder).grid(row=2, column=1, columnspan=2,
                                                       sticky="ew", padx=8)
-        ttk.Button(opt, text="…", width=3, command=self.choose_folder).grid(row=1, column=3, padx=4)
-        ttk.Button(opt, text="Ordner öffnen", command=self.open_folder).grid(row=1, column=4, padx=8)
+        ttk.Button(opt, text="…", width=3, command=self.choose_folder).grid(row=2, column=3, padx=4)
+        ttk.Button(opt, text="Ordner öffnen", command=self.open_folder).grid(row=2, column=4, padx=8)
         opt.columnconfigure(2, weight=1)
+        self.on_mode_change(initial=True)
 
         # Download + Fortschritt
         self.dl_btn = ttk.Button(self, text="⬇  Download starten", command=self.start)
@@ -277,9 +357,37 @@ class App(tk.Tk):
 
         self.after(100, self.poll)
 
+    # ---------- Qualität / Format ----------
+    def remember_choice(self):
+        """Merkt sich die aktuelle Auswahl für den jeweiligen Typ."""
+        if self.quality.get():
+            self.saved[f"{self.current_mode}_quality"] = self.quality.get()
+        if self.fmt.get():
+            self.saved[f"{self.current_mode}_fmt"] = self.fmt.get()
+
+    def on_mode_change(self, initial=False):
+        if not initial:
+            self.remember_choice()
+        mode = self.mode.get()
+        self.current_mode = mode
+        if mode == "audio":
+            self.quality_label.config(text="Audioqualität:")
+            qualities = list(AUDIO_QUALITIES)
+            formats = AUDIO_FORMATS if self.ffmpeg_dir else ["M4A"]
+        else:
+            self.quality_label.config(text="Auflösung:")
+            qualities = list(VIDEO_QUALITIES)
+            formats = VIDEO_FORMATS if self.ffmpeg_dir else ["MP4"]
+        self.quality_box.config(values=qualities)
+        self.fmt_box.config(values=formats)
+        q = self.saved.get(f"{mode}_quality")
+        f = self.saved.get(f"{mode}_fmt")
+        self.quality.set(q if q in qualities else qualities[0])
+        self.fmt.set(f if f in formats else formats[0])
+
     # ---------- ffmpeg ----------
     def refresh_ffmpeg_ui(self):
-        self.audio_rb.config(text="Nur Audio (MP3)" if self.ffmpeg_dir else "Nur Audio (M4A)")
+        self.on_mode_change(initial=True)
         self.info_label.config(
             text=f"yt-dlp {yt_dlp.version.__version__}   |   ffmpeg: "
                  + ("bereit ✔" if self.ffmpeg_dir else "fehlt ✘"))
@@ -323,13 +431,20 @@ class App(tk.Tk):
         if not urls:
             messagebox.showwarning("Kein Link", "Bitte mindestens einen gültigen Link einfügen.")
             return
+        self.remember_choice()
+        self.saved["mode"] = self.mode.get()
+        self.saved["folder"] = self.folder.get()
+        save_settings(self.saved)
+
         self.busy = True
         self.dl_btn.config(state="disabled")
         self.bar["value"] = 0
+        self.write_log(f"Einstellung: {'Audio' if self.mode.get() == 'audio' else 'Video'}, "
+                       f"{self.quality.get()}, {self.fmt.get()}")
         threading.Thread(
             target=download_worker,
-            args=(urls, self.folder.get(), self.mode.get(), self.playlist.get(),
-                  self.ffmpeg_dir, self.q),
+            args=(urls, self.folder.get(), self.mode.get(), self.quality.get(),
+                  self.fmt.get(), self.playlist.get(), self.ffmpeg_dir, self.q),
             daemon=True,
         ).start()
 

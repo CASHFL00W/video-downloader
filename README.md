@@ -15,7 +15,10 @@ Beim allerersten Start richtet die App einmalig ffmpeg ein (ca. 100 MB, dauert j
 ## Funktionen
 
 - Mehrere Links auf einmal (ein Link pro Zeile)
-- Video als MP4 in bester Qualität oder nur Audio als MP3
+- Auflösung wählbar: Beste, 4K, 2K, 1080p, 720p, 480p, 360p, 240p
+- Videoformat: MP4, MKV oder WEBM
+- Nur Audio: MP3, M4A, WAV oder OPUS in wählbarer Qualität (bis 320 kbit/s)
+- Merkt sich deine letzten Einstellungen
 - Ganze Playlists auf Wunsch
 - Fortschrittsanzeige mit Geschwindigkeit und Restzeit
 - Speicherort frei wählbar (Standard: `Downloads\Video-Downloader`)
