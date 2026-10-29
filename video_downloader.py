@@ -163,6 +163,61 @@ def ensure_ytdlp():
 
 yt_dlp = ensure_ytdlp()
 
+try:
+    import sv_ttk  # Windows-11-Design (Sun Valley) mit Hell/Dunkel
+except ImportError:
+    sv_ttk = None
+    if not FROZEN:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "sv-ttk"])
+            import sv_ttk
+        except Exception:
+            sv_ttk = None
+
+
+# --------------------------------------------------------------------------
+# Hell / Dunkel
+# --------------------------------------------------------------------------
+THEMES = {"System": "system", "Hell": "light", "Dunkel": "dark"}
+
+TEXT_COLORS = {
+    "light": {"bg": "#ffffff", "fg": "#1c1c1c", "sel": "#cce4f7",
+              "log_bg": "#f3f3f3", "log_fg": "#1c1c1c"},
+    "dark": {"bg": "#2b2b2b", "fg": "#ececec", "sel": "#264f78",
+             "log_bg": "#1c1c1c", "log_fg": "#d4d4d4"},
+}
+
+
+def windows_uses_dark():
+    """Liest aus der Windows-Registry, ob Apps im dunklen Modus laufen sollen."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            value, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        return value == 0
+    except Exception:
+        return False
+
+
+def set_titlebar_dark(window, dark):
+    """Färbt die Windows-Titelleiste passend ein (Windows 10/11)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        value = ctypes.c_int(1 if dark else 0)
+        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (neu / alt)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                break
+    except Exception:
+        pass
+
 
 # --------------------------------------------------------------------------
 # Pfade & ffmpeg
@@ -373,8 +428,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Video-Downloader  v{VERSION}" if VERSION != "dev" else "Video-Downloader")
-        self.geometry("740x620")
-        self.minsize(600, 520)
+        self.geometry("800x740")
+        self.minsize(660, 640)
         try:
             self.iconbitmap(resource_path("icon.ico"))
         except Exception:
@@ -442,7 +497,8 @@ class App(tk.Tk):
         self.on_mode_change(initial=True)
 
         # Download + Fortschritt
-        self.dl_btn = ttk.Button(self, text="⬇  Download starten", command=self.start)
+        self.dl_btn = ttk.Button(self, text="⬇  Download starten", command=self.start,
+                                 style="Accent.TButton" if sv_ttk else "TButton")
         self.dl_btn.pack(fill="x", padx=10, pady=(8, 4), ipady=6)
 
         self.bar = ttk.Progressbar(self, maximum=100)
@@ -461,9 +517,20 @@ class App(tk.Tk):
                                      text="Nach Updates suchen" if FROZEN else "yt-dlp aktualisieren",
                                      command=self.update_app)
         self.update_btn.pack(side="left")
+        ttk.Label(bottom, text="Design:").pack(side="left", padx=(16, 6))
+        self.theme_choice = tk.StringVar(value=self.saved.get("theme", "System"))
+        if self.theme_choice.get() not in THEMES:
+            self.theme_choice.set("System")
+        theme_box = ttk.Combobox(bottom, textvariable=self.theme_choice, state="readonly",
+                                 values=list(THEMES), width=8)
+        theme_box.pack(side="left")
+        theme_box.bind("<<ComboboxSelected>>", self.on_theme_change)
         self.info_label = ttk.Label(bottom)
         self.info_label.pack(side="right")
         self.refresh_ffmpeg_ui()
+        self.applied_theme = None
+        self.apply_theme()
+        self.after(2000, self.watch_system_theme)
 
         if not self.ffmpeg_dir:
             if sys.platform == "win32":
@@ -479,6 +546,46 @@ class App(tk.Tk):
                 target=check_for_update, args=(self.q, False), daemon=True).start())
 
         self.after(100, self.poll)
+
+    # ---------- Hell / Dunkel ----------
+    def effective_theme(self):
+        choice = THEMES.get(self.theme_choice.get(), "system")
+        if choice == "system":
+            return "dark" if windows_uses_dark() else "light"
+        return choice
+
+    def apply_theme(self):
+        theme = self.effective_theme()
+        if theme == self.applied_theme:
+            return
+        self.applied_theme = theme
+        if sv_ttk:
+            sv_ttk.set_theme(theme)
+        c = TEXT_COLORS[theme]
+        self.configure(bg=ttk.Style().lookup("TFrame", "background") or c["bg"])
+        self.links.config(bg=c["bg"], fg=c["fg"], insertbackground=c["fg"],
+                          selectbackground=c["sel"], relief="flat", highlightthickness=1,
+                          highlightbackground="#5a5a5a" if theme == "dark" else "#c8c8c8",
+                          highlightcolor="#4cc2ff" if theme == "dark" else "#005fb8")
+        self.log.config(bg=c["log_bg"], fg=c["log_fg"], selectbackground=c["sel"],
+                        relief="flat", highlightthickness=0)
+        set_titlebar_dark(self, theme == "dark")
+        # Titelleiste neu zeichnen lassen
+        w, h = self.winfo_width(), self.winfo_height()
+        if w > 1 and h > 1:
+            self.geometry(f"{w + 1}x{h}")
+            self.after(10, lambda: self.geometry(f"{w}x{h}"))
+
+    def on_theme_change(self, _event=None):
+        self.saved["theme"] = self.theme_choice.get()
+        save_settings(self.saved)
+        self.apply_theme()
+
+    def watch_system_theme(self):
+        """Im Modus "System" Änderungen der Windows-Einstellung live übernehmen."""
+        if self.theme_choice.get() == "System":
+            self.apply_theme()
+        self.after(2000, self.watch_system_theme)
 
     # ---------- Qualität / Format ----------
     def remember_choice(self):

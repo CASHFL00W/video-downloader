@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Abhängigkeiten installieren
-        run: python -m pip install --upgrade pip yt-dlp pyinstaller
+        run: python -m pip install --upgrade pip yt-dlp sv-ttk pyinstaller
 
       - name: Versionsnummer eintragen
         shell: bash
@@ -33,6 +33,7 @@ jobs:
           --icon icon.ico
           --add-data "icon.ico;."
           --collect-submodules yt_dlp
+          --collect-data sv_ttk
           --hidden-import _version
           video_downloader.py
 

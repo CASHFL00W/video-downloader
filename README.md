@@ -20,6 +20,7 @@ Beim allerersten Start richtet die App einmalig ffmpeg ein (ca. 100 MB, dauert j
 - Nur Audio: MP3, M4A, WAV oder OPUS in wählbarer Qualität (bis 320 kbit/s)
 - Merkt sich deine letzten Einstellungen
 - Aktualisiert sich selbst per Knopfdruck
+- Modernes Windows-11-Design in Hell, Dunkel oder automatisch wie Windows (System)
 - Ganze Playlists auf Wunsch
 - Fortschrittsanzeige mit Geschwindigkeit und Restzeit
 - Speicherort frei wählbar (Standard: `Downloads\Video-Downloader`)
